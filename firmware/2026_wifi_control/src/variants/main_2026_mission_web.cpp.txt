@@ -1,0 +1,738 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ArduinoOTA.h>
+#include <esp_wifi.h>
+
+#include "ICM_20948.h"
+#include "Servo_Module.h"
+#include "Servo_Controller.h"
+
+// ============================================================
+// Test firmware for ESP32 underwater rocket bench/pool checks
+// - AP Wi-Fi + OTA retained
+// - Simple web control/debug retained
+// - PS5 removed
+// - Roll safety removed
+// - 6-axis Mahony attitude retained
+// - Pitch/yaw stabilization retained
+// ============================================================
+
+// ---------------- Logging ----------------
+#define LOG_LEVEL 1   // 0 = silent, 1 = important/status, 2 = CSV/debug
+
+#if LOG_LEVEL >= 1
+  #define LOGI(...)        Serial.printf(__VA_ARGS__)
+  #define LOGILN(x)        Serial.println(F(x))
+#else
+  #define LOGI(...)
+  #define LOGILN(x)
+#endif
+
+#if LOG_LEVEL >= 2
+  #define LOGV(...)        Serial.printf(__VA_ARGS__)
+#else
+  #define LOGV(...)
+#endif
+
+// ---------------- Wi-Fi / OTA ----------------
+static const char* AP_SSID      = "Rocket-ESP32-OTA";
+static const char* AP_PASS      = UWR_AP_PASSWORD;  // from include/secrets.h (not committed)
+static const char* OTA_HOSTNAME = "Rocket-ESP32";
+static const uint16_t OTA_PORT  = 3232;
+
+WebServer server(80);
+TaskHandle_t wifiTaskHandle = nullptr;
+volatile bool g_otaActive = false;
+
+// ---------------- Wiring ----------------
+static const uint8_t SDA_PIN = 21;
+static const uint8_t SCL_PIN = 22;
+static const uint32_t I2C_HZ = 100000;
+static const uint8_t IMU_AD0_VAL = 1;   // 0 => 0x68, 1 => 0x69
+static const uint32_t SERIAL_BAUD = 115200;
+
+// PCA9685 channels.
+// IMPORTANT: every output must be unique. Old code used channel 4 for both finLeft and ESC.
+static const uint8_t FIN_TOP_CH    = 0;
+static const uint8_t FIN_BOTTOM_CH = 1;
+static const uint8_t FIN_LEFT_CH   = 2;
+static const uint8_t FIN_RIGHT_CH  = 3;
+static const uint8_t ESC_CH        = 4;
+
+// ---------------- IMU calibration ----------------
+static const bool ACC_IN_MG = true;
+static const uint16_t CALIB_SAMPLES = 500;
+static const uint16_t CALIB_DELAY_MS = 5;
+
+ICM_20948_I2C imu;
+float gyroBias[3]  = {0, 0, 0};  // dps
+float accelBias[3] = {0, 0, 0};  // g
+uint32_t lastIMUokMs = 0;
+
+static inline float to_g(float mg_or_g) {
+  return ACC_IN_MG ? (mg_or_g / 1000.0f) : mg_or_g;
+}
+
+// ---------------- Attitude filter ----------------
+float q0 = 1, q1 = 0, q2 = 0, q3 = 0;
+float twoKp = 2.0f * 0.5f;
+float twoKi = 0.0f;
+float ix = 0, iy = 0, iz = 0;
+
+static const int GZ_WIN = 8;
+float gzBuf[GZ_WIN] = {0};
+int gzIdx = 0;
+int gzFilled = 0;
+float gzMA = 0;
+
+float aMagLP = 1.0f, aDevLP = 0.0f;
+static const float GYRO_STILL_DPS = 0.2f;
+static const float AMAG_TOL_G     = 0.03f;
+static const float ADEV_TOL_G     = 0.005f;
+static const float BIAS_TAU_S     = 10.0f;
+
+// ---------------- Actuators ----------------
+Servo_Controller servo(FIN_LEFT_CH, FIN_RIGHT_CH, FIN_TOP_CH, FIN_BOTTOM_CH);
+Servo_Module esc(ESC_CH, 0, 1000, 2000, false);
+
+static const uint16_t IDLE_THROTTLE_US   = 1000;
+static const uint16_t DIVE_THROTTLE_US   = 1850;
+static const uint16_t CRUISE_THROTTLE_US = 1850;
+static const uint16_t TURN_THROTTLE_US   = 1600;
+static const uint16_t THROTTLE_MIN_US    = 1000;
+static const uint16_t THROTTLE_MAX_US    = 2000;
+static const float THROTTLE_SLEW_US_PER_S = 850.0f;  // ~1 s from 1000 to 1850 us
+
+float g_slewThrUs = IDLE_THROTTLE_US;
+uint32_t g_lastSlewUs = 0;
+
+// ---------------- Test mission ----------------
+enum MissionState : uint8_t {
+  MS_IDLE,
+  MS_ARMED,
+  MS_DIVE,
+  MS_OUTBOUND,
+  MS_TURN,
+  MS_INBOUND,
+  MS_DONE,
+  MS_ABORT
+};
+
+volatile bool missionActive = false;
+MissionState mstate = MS_IDLE;
+
+static const bool AUTO_START_ENABLED = true;
+static const uint32_t AUTO_START_DELAY_MS = 5000;
+static uint32_t autoStartAtMs = 0;
+static bool autoStartConsumed = false;
+static volatile bool webStartRequested = false;
+static volatile bool webStopRequested = false;
+
+static const uint16_t DIVE_TIME_MS = 4000;
+static const float LEG_TIME_S = 50.0f;
+static const uint16_t YAW_TOL_DEG = 8;
+static const uint16_t TURN_HOLD_MS = 400;
+static const uint16_t TURN_TIMEOUT_MS = 10000;
+static const float DIVE_PITCH_BIAS_DEG = 0.0f;
+
+float yawRefDeg = 0.0f;
+float pitchRefDeg = 0.0f;
+uint32_t phaseT0ms = 0;
+uint32_t turnT0ms = 0;
+float legTimeS = 0.0f;
+float turnHoldS = 0.0f;
+uint16_t autoThrottle = IDLE_THROTTLE_US;
+
+// ---------------- Manual web control ----------------
+volatile bool manualMode = false;
+volatile uint16_t manualThrottleUs = IDLE_THROTTLE_US;
+volatile float manualPitchRefDeg = 0.0f;
+volatile float manualYawRefDeg = 0.0f;
+
+// ---------------- Runtime telemetry ----------------
+uint32_t t0_ms = 0;
+uint32_t lastMicros = 0;
+float rollDeg = 0.0f, pitchDeg = 0.0f, yawDeg = 0.0f;
+float yawZero = 0.0f;
+bool yawZeroValid = false;
+uint32_t lastStatusPrintMs = 0;
+
+// ============================================================
+// Small helpers
+// ============================================================
+static inline float clampf(float x, float a, float b) {
+  return x < a ? a : (x > b ? b : x);
+}
+
+static inline float norm180(float a) {
+  while (a > 180.0f) a -= 360.0f;
+  while (a <= -180.0f) a += 360.0f;
+  return a;
+}
+
+static inline float yawErrDeg(float refDeg, float nowDeg) {
+  return norm180(refDeg - nowDeg);
+}
+
+static const char* stateName(MissionState s) {
+  switch (s) {
+    case MS_IDLE: return "IDLE";
+    case MS_ARMED: return "ARMED";
+    case MS_DIVE: return "DIVE";
+    case MS_OUTBOUND: return "OUTBOUND";
+    case MS_TURN: return "TURN";
+    case MS_INBOUND: return "INBOUND";
+    case MS_DONE: return "DONE";
+    case MS_ABORT: return "ABORT";
+    default: return "UNKNOWN";
+  }
+}
+
+static uint16_t slewThrottleToward(uint16_t targetUs) {
+  uint32_t now = micros();
+  float dt = (g_lastSlewUs == 0) ? 0.005f : (now - g_lastSlewUs) * 1e-6f;
+  g_lastSlewUs = now;
+  dt = clampf(dt, 0.0005f, 0.02f);
+
+  targetUs = constrain(targetUs, THROTTLE_MIN_US, THROTTLE_MAX_US);
+  float step = THROTTLE_SLEW_US_PER_S * dt;
+  if (g_slewThrUs < targetUs) g_slewThrUs = fminf(g_slewThrUs + step, (float)targetUs);
+  else                        g_slewThrUs = fmaxf(g_slewThrUs - step, (float)targetUs);
+
+  g_slewThrUs = clampf(g_slewThrUs, THROTTLE_MIN_US, THROTTLE_MAX_US);
+  return (uint16_t)g_slewThrUs;
+}
+
+static void safeOutputs() {
+  autoThrottle = IDLE_THROTTLE_US;
+  manualThrottleUs = IDLE_THROTTLE_US;
+  esc.writeMicroseconds(IDLE_THROTTLE_US);
+  g_slewThrUs = IDLE_THROTTLE_US;
+  servo.setTargetAngles(0.0, 0.0);
+  servo.resetServos(90);
+}
+
+static bool allowServoWrite() {
+  static uint32_t last = 0;
+  uint32_t now = millis();
+  if (now - last >= 5) { last = now; return true; }
+  return false;
+}
+
+// ============================================================
+// IMU / I2C
+// ============================================================
+bool i2cBusRecover() {
+  pinMode(SDA_PIN, INPUT_PULLUP);
+  pinMode(SCL_PIN, INPUT_PULLUP);
+  delay(1);
+
+  for (int i = 0; i < 9 && digitalRead(SDA_PIN) == LOW; ++i) {
+    pinMode(SCL_PIN, OUTPUT);
+    digitalWrite(SCL_PIN, LOW);
+    delayMicroseconds(5);
+    pinMode(SCL_PIN, INPUT_PULLUP);
+    delayMicroseconds(5);
+  }
+
+  pinMode(SDA_PIN, OUTPUT);
+  digitalWrite(SDA_PIN, LOW);
+  delayMicroseconds(5);
+  pinMode(SCL_PIN, INPUT_PULLUP);
+  delayMicroseconds(5);
+  pinMode(SDA_PIN, INPUT_PULLUP);
+  delayMicroseconds(5);
+
+  Wire.begin(SDA_PIN, SCL_PIN, I2C_HZ);
+  Wire.setTimeOut(50);
+  return digitalRead(SDA_PIN) == HIGH && digitalRead(SCL_PIN) == HIGH;
+}
+
+bool initIMU() {
+  Wire.begin(SDA_PIN, SCL_PIN, I2C_HZ);
+  Wire.setTimeOut(50);
+
+  ICM_20948_Status_e status = ICM_20948_Stat_Err;
+  for (int i = 0; i < 10; ++i) {
+    status = imu.begin(Wire, IMU_AD0_VAL);
+    if (status == ICM_20948_Stat_Ok) {
+      lastIMUokMs = millis();
+      return true;
+    }
+    delay(100);
+  }
+  return false;
+}
+
+void recoverIMU() {
+  i2cBusRecover();
+  imu.swReset();
+  delay(10);
+  imu.begin(Wire, IMU_AD0_VAL);
+  delay(5);
+}
+
+bool readIMU_safe() {
+  for (int t = 0; t < 3; ++t) {
+    if (!imu.dataReady()) { delay(2); continue; }
+    imu.getAGMT();
+    if (imu.status == ICM_20948_Stat_Ok) {
+      lastIMUokMs = millis();
+      return true;
+    }
+    delay(5);
+  }
+  return false;
+}
+
+void calibrateStill() {
+  LOGILN("[Calib] Keep IMU still...");
+  delay(500);
+
+  double axSum = 0, aySum = 0, azSum = 0;
+  double gxSum = 0, gySum = 0, gzSum = 0;
+  uint16_t n = 0;
+
+  while (n < CALIB_SAMPLES) {
+    if (imu.dataReady()) {
+      imu.getAGMT();
+      axSum += to_g(imu.accX());
+      aySum += to_g(imu.accY());
+      azSum += to_g(imu.accZ());
+      gxSum += imu.gyrX();
+      gySum += imu.gyrY();
+      gzSum += imu.gyrZ();
+      ++n;
+    }
+    delay(CALIB_DELAY_MS);
+  }
+
+  float axm = axSum / n;
+  float aym = aySum / n;
+  float azm = azSum / n;
+
+  gyroBias[0] = gxSum / n;
+  gyroBias[1] = gySum / n;
+  gyroBias[2] = gzSum / n;
+
+  float normA = sqrtf(axm * axm + aym * aym + azm * azm);
+  if (normA < 1e-6f) normA = 1.0f;
+
+  accelBias[0] = axm - axm / normA;
+  accelBias[1] = aym - aym / normA;
+  accelBias[2] = azm - azm / normA;
+
+  LOGI("[Calib] gyro bias dps = %.4f, %.4f, %.4f\n", gyroBias[0], gyroBias[1], gyroBias[2]);
+}
+
+void updateGyroBiasOnline(float ax_g, float ay_g, float az_g,
+                          float gx_raw, float gy_raw, float gz_raw,
+                          float dt) {
+  float amag = sqrtf(ax_g * ax_g + ay_g * ay_g + az_g * az_g);
+  float alpha = 1.0f - expf(-2.0f * PI * 2.0f * dt);
+  float err = fabsf(amag - aMagLP);
+  aMagLP += alpha * (amag - aMagLP);
+  aDevLP += alpha * (err - aDevLP);
+
+  bool gyroQuiet = fabsf(gx_raw) < GYRO_STILL_DPS &&
+                   fabsf(gy_raw) < GYRO_STILL_DPS &&
+                   fabsf(gz_raw) < GYRO_STILL_DPS;
+  bool accelNear1g = fabsf(amag - 1.0f) < AMAG_TOL_G;
+  bool accelQuiet = aDevLP < ADEV_TOL_G;
+
+  if (!(gyroQuiet && accelNear1g && accelQuiet)) return;
+
+  float a = dt / BIAS_TAU_S;
+  gyroBias[0] = (1.0f - a) * gyroBias[0] + a * gx_raw;
+  gyroBias[1] = (1.0f - a) * gyroBias[1] + a * gy_raw;
+  gyroBias[2] = (1.0f - a) * gyroBias[2] + a * gz_raw;
+}
+
+// ============================================================
+// 6-axis Mahony attitude
+// ============================================================
+void mahony6Update(float ax, float ay, float az, float gx, float gy, float gz, float dt) {
+  float norm = sqrtf(ax * ax + ay * ay + az * az);
+  if (norm < 1e-6f) return;
+  ax /= norm; ay /= norm; az /= norm;
+
+  float vx = 2.0f * (q1 * q3 - q0 * q2);
+  float vy = 2.0f * (q0 * q1 + q2 * q3);
+  float vz = q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3;
+
+  float ex = ay * vz - az * vy;
+  float ey = az * vx - ax * vz;
+  float ez = ax * vy - ay * vx;
+
+  if (twoKi > 0.0f) {
+    ix += twoKi * ex * dt;
+    iy += twoKi * ey * dt;
+    iz += twoKi * ez * dt;
+  } else {
+    ix = iy = iz = 0.0f;
+  }
+
+  gx += twoKp * ex + ix;
+  gy += twoKp * ey + iy;
+  gz += twoKp * ez + iz;
+
+  float qw = q0, qx = q1, qy = q2, qz = q3;
+  float halfDt = 0.5f * dt;
+
+  q0 += (-qx * gx - qy * gy - qz * gz) * halfDt;
+  q1 += ( qw * gx + qy * gz - qz * gy) * halfDt;
+  q2 += ( qw * gy - qx * gz + qz * gx) * halfDt;
+  q3 += ( qw * gz + qx * gy - qy * gx) * halfDt;
+
+  float n = sqrtf(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+  if (n > 0.0f) { q0 /= n; q1 /= n; q2 /= n; q3 /= n; }
+}
+
+void quatToRPYdeg(float w, float x, float y, float z,
+                  float& roll, float& pitch, float& yaw) {
+  float sinp = 2.0f * (w * y - z * x);
+  pitch = asinf(clampf(sinp, -1.0f, 1.0f)) * 180.0f / PI;
+
+  float sinr_cosp = 2.0f * (w * x + y * z);
+  float cosr_cosp = 1.0f - 2.0f * (x * x + y * y);
+  roll = atan2f(sinr_cosp, cosr_cosp) * 180.0f / PI;
+
+  float siny_cosp = 2.0f * (w * z + x * y);
+  float cosy_cosp = 1.0f - 2.0f * (y * y + z * z);
+  yaw = atan2f(siny_cosp, cosy_cosp) * 180.0f / PI;
+}
+
+// ============================================================
+// Mission / control
+// ============================================================
+void startMissionFromCurrentAttitude() {
+  missionActive = true;
+  manualMode = false;
+  mstate = MS_ARMED;
+  LOGILN("[Mission] start requested");
+}
+
+void abortMission() {
+  missionActive = false;
+  manualMode = false;
+  mstate = MS_IDLE;
+  safeOutputs();
+  LOGILN("[Mission] stopped");
+}
+
+void updateMission(float dt) {
+  if (!missionActive) return;
+  if (g_otaActive) { mstate = MS_ABORT; }
+
+  switch (mstate) {
+    case MS_ARMED:
+      yawRefDeg = yawDeg;
+      pitchRefDeg = pitchDeg;
+      autoThrottle = IDLE_THROTTLE_US;
+      phaseT0ms = millis();
+      legTimeS = 0.0f;
+      turnHoldS = 0.0f;
+      servo.setTargetAngles(pitchRefDeg + DIVE_PITCH_BIAS_DEG, yawRefDeg);
+      mstate = MS_DIVE;
+      LOGI("[Mission] ARMED: pitchRef=%.2f yawRef=%.2f\n", pitchRefDeg, yawRefDeg);
+      break;
+
+    case MS_DIVE:
+      autoThrottle = DIVE_THROTTLE_US;
+      servo.setTargetAngles(pitchRefDeg + DIVE_PITCH_BIAS_DEG, yawRefDeg);
+      if (millis() - phaseT0ms >= DIVE_TIME_MS) {
+        phaseT0ms = millis();
+        legTimeS = 0.0f;
+        mstate = MS_OUTBOUND;
+        LOGILN("[Mission] OUTBOUND");
+      }
+      break;
+
+    case MS_OUTBOUND:
+      autoThrottle = CRUISE_THROTTLE_US;
+      servo.setTargetAngles(pitchRefDeg, yawRefDeg);
+      legTimeS += dt;
+      if (legTimeS >= LEG_TIME_S) {
+        yawRefDeg = norm180(yawRefDeg + 180.0f);
+        turnT0ms = millis();
+        turnHoldS = 0.0f;
+        mstate = MS_TURN;
+        LOGI("[Mission] TURN: new yawRef=%.2f\n", yawRefDeg);
+      }
+      break;
+
+    case MS_TURN: {
+      autoThrottle = TURN_THROTTLE_US;
+      servo.setTargetAngles(pitchRefDeg, yawRefDeg);
+      float err = fabsf(yawErrDeg(yawRefDeg, yawDeg));
+      turnHoldS = (err <= YAW_TOL_DEG) ? (turnHoldS + dt) : 0.0f;
+      if (turnHoldS >= TURN_HOLD_MS / 1000.0f || millis() - turnT0ms > TURN_TIMEOUT_MS) {
+        phaseT0ms = millis();
+        legTimeS = 0.0f;
+        mstate = MS_INBOUND;
+        LOGILN("[Mission] INBOUND");
+      }
+      break;
+    }
+
+    case MS_INBOUND:
+      autoThrottle = CRUISE_THROTTLE_US;
+      servo.setTargetAngles(pitchRefDeg, yawRefDeg);
+      legTimeS += dt;
+      if (legTimeS >= LEG_TIME_S) {
+        mstate = MS_DONE;
+      }
+      break;
+
+    case MS_DONE:
+      LOGILN("[Mission] DONE");
+      missionActive = false;
+      mstate = MS_IDLE;
+      autoThrottle = IDLE_THROTTLE_US;
+      servo.setTargetAngles(pitchRefDeg, yawRefDeg);
+      break;
+
+    case MS_ABORT:
+    default:
+      abortMission();
+      break;
+  }
+}
+
+// ============================================================
+// Web debug/control
+// ============================================================
+String jsonStatus() {
+  String s;
+  s.reserve(512);
+  s += "{";
+  s += "\"state\":\"" + String(stateName(mstate)) + "\",";
+  s += "\"missionActive\":" + String(missionActive ? "true" : "false") + ",";
+  s += "\"manualMode\":" + String(manualMode ? "true" : "false") + ",";
+  s += "\"otaActive\":" + String(g_otaActive ? "true" : "false") + ",";
+  s += "\"roll\":" + String(rollDeg, 2) + ",";
+  s += "\"pitch\":" + String(pitchDeg, 2) + ",";
+  s += "\"yaw\":" + String(yawDeg, 2) + ",";
+  s += "\"pitchRef\":" + String(pitchRefDeg, 2) + ",";
+  s += "\"yawRef\":" + String(yawRefDeg, 2) + ",";
+  s += "\"throttleTarget\":" + String(manualMode ? manualThrottleUs : autoThrottle) + ",";
+  s += "\"throttleOut\":" + String((uint16_t)g_slewThrUs) + ",";
+  s += "\"uptimeMs\":" + String(millis());
+  s += "}";
+  return s;
+}
+
+void handleRoot() {
+  String html = F(
+    "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>Rocket ESP32</title>"
+    "<style>body{font-family:Arial;margin:20px;max-width:760px}button{padding:10px;margin:4px}input{width:80px}</style>"
+    "</head><body><h2>Rocket ESP32 Test Control</h2>"
+    "<pre id='s'>loading...</pre>"
+    "<button onclick=\"fetch('/start')\">Start mission</button>"
+    "<button onclick=\"fetch('/stop')\">Stop / idle</button>"
+    "<button onclick=\"fetch('/neutral')\">Neutral fins</button>"
+    "<h3>Manual stabilized hold</h3>"
+    "Throttle us <input id='thr' value='1000'> "
+    "Pitch ref <input id='p' value='0'> "
+    "Yaw ref <input id='y' value='0'> "
+    "<button onclick=\"fetch('/manual?thr='+thr.value+'&pitch='+p.value+'&yaw='+y.value)\">Apply manual</button>"
+    "<button onclick=\"fetch('/manual_off')\">Manual off</button>"
+    "<script>async function u(){let r=await fetch('/json');s.textContent=JSON.stringify(await r.json(),null,2)}setInterval(u,500);u();</script>"
+    "</body></html>"
+  );
+  server.send(200, "text/html", html);
+}
+
+void setupWebServer() {
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/json", HTTP_GET, []() { server.send(200, "application/json", jsonStatus()); });
+  server.on("/start", HTTP_ANY, []() { webStartRequested = true; server.send(200, "text/plain", "start requested"); });
+  server.on("/stop", HTTP_ANY, []() { webStopRequested = true; server.send(200, "text/plain", "stop requested"); });
+  server.on("/neutral", HTTP_ANY, []() { servo.resetServos(90); server.send(200, "text/plain", "neutral"); });
+  server.on("/manual", HTTP_ANY, []() {
+    manualThrottleUs = constrain(server.arg("thr").toInt(), THROTTLE_MIN_US, THROTTLE_MAX_US);
+    manualPitchRefDeg = server.hasArg("pitch") ? server.arg("pitch").toFloat() : pitchDeg;
+    manualYawRefDeg = server.hasArg("yaw") ? server.arg("yaw").toFloat() : yawDeg;
+    manualMode = true;
+    missionActive = false;
+    mstate = MS_IDLE;
+    server.send(200, "text/plain", "manual mode on");
+  });
+  server.on("/manual_off", HTTP_ANY, []() {
+    manualMode = false;
+    manualThrottleUs = IDLE_THROTTLE_US;
+    server.send(200, "text/plain", "manual mode off");
+  });
+  server.begin();
+}
+
+void wifiTask(void*) {
+  WiFi.mode(WIFI_AP);
+  WiFi.setSleep(false);
+  WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
+  WiFi.softAP(AP_SSID, AP_PASS, 1, 0, 1);
+  esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+  esp_wifi_set_max_tx_power(78);
+
+  LOGI("[WiFi] AP: %s  IP: %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+
+  ArduinoOTA.setHostname(OTA_HOSTNAME);
+  ArduinoOTA.setPassword(AP_PASS);
+  ArduinoOTA.setPort(OTA_PORT);
+  ArduinoOTA.onStart([]() {
+    g_otaActive = true;
+    safeOutputs();
+    LOGILN("[OTA] start");
+  });
+  ArduinoOTA.onEnd([]() {
+    LOGILN("[OTA] end");
+    g_otaActive = false;
+  });
+  ArduinoOTA.onError([](ota_error_t e) {
+    LOGI("[OTA] error: %d\n", e);
+    g_otaActive = false;
+  });
+  ArduinoOTA.begin();
+
+  setupWebServer();
+
+  for (;;) {
+    ArduinoOTA.handle();
+    server.handleClient();
+    vTaskDelay(pdMS_TO_TICKS(2));
+  }
+}
+
+// ============================================================
+// Arduino setup / loop
+// ============================================================
+void setup() {
+  Serial.begin(SERIAL_BAUD);
+  delay(200);
+
+  Servo_Module::configureBus(0x40, SDA_PIN, SCL_PIN, I2C_HZ, 50);
+  esc.writeMicroseconds(IDLE_THROTTLE_US);
+  servo.resetServos(90);
+
+  xTaskCreatePinnedToCore(wifiTask, "wifiTask", 6144, nullptr, 4, &wifiTaskHandle, 0);
+
+  LOGILN("[Setup] 5 s OTA/web maintenance window...");
+  uint32_t tStart = millis();
+  while (millis() - tStart < 5000) {
+    delay(50);
+  }
+
+  if (!initIMU()) {
+    LOGILN("[Setup] IMU init failed. OTA/web is still available.");
+    safeOutputs();
+    while (true) delay(1000);
+  }
+
+  calibrateStill();
+  servo.begin();
+  safeOutputs();
+
+  t0_ms = millis();
+  lastMicros = micros();
+  autoStartAtMs = millis() + AUTO_START_DELAY_MS;
+  LOGILN("[Setup] Ready. Auto mission starts in 5 s unless stopped from web.");
+}
+
+void loop() {
+  if (g_otaActive) {
+    safeOutputs();
+    delay(10);
+    return;
+  }
+
+  if (webStopRequested) {
+    webStopRequested = false;
+    abortMission();
+    autoStartConsumed = true;
+  }
+
+  if (!readIMU_safe()) {
+    safeOutputs();
+    if (millis() - lastIMUokMs > 500) recoverIMU();
+    delay(5);
+    return;
+  }
+
+  float ax_g_raw = to_g(imu.accX());
+  float ay_g_raw = to_g(imu.accY());
+  float az_g_raw = to_g(imu.accZ());
+  float gx_raw = imu.gyrX();
+  float gy_raw = imu.gyrY();
+  float gz_raw = imu.gyrZ();
+
+  uint32_t nowUs = micros();
+  float dt = (nowUs - lastMicros) * 1e-6f;
+  lastMicros = nowUs;
+  dt = clampf(dt, 0.0005f, 0.02f);
+
+  updateGyroBiasOnline(ax_g_raw, ay_g_raw, az_g_raw, gx_raw, gy_raw, gz_raw, dt);
+
+  float ax = ax_g_raw - accelBias[0];
+  float ay = ay_g_raw - accelBias[1];
+  float az = az_g_raw - accelBias[2];
+  float gx = gx_raw - gyroBias[0];
+  float gy = gy_raw - gyroBias[1];
+  float gz = gz_raw - gyroBias[2];
+
+  gzMA -= gzBuf[gzIdx];
+  gzBuf[gzIdx] = gz;
+  gzMA += gz;
+  gzIdx = (gzIdx + 1) % GZ_WIN;
+  if (gzFilled < GZ_WIN) ++gzFilled;
+  float gzFiltered = gzMA / (float)gzFilled;
+
+  const float D2R = PI / 180.0f;
+  mahony6Update(ax, ay, az, gx * D2R, gy * D2R, gzFiltered * D2R, dt);
+  quatToRPYdeg(q0, q1, q2, q3, rollDeg, pitchDeg, yawDeg);
+
+  if (!yawZeroValid) { yawZero = yawDeg; yawZeroValid = true; }
+
+  if (webStartRequested) {
+    webStartRequested = false;
+    startMissionFromCurrentAttitude();
+    autoStartConsumed = true;
+  }
+
+  if (AUTO_START_ENABLED && !autoStartConsumed && !missionActive && !manualMode && millis() >= autoStartAtMs) {
+    startMissionFromCurrentAttitude();
+    autoStartConsumed = true;
+  }
+
+  updateMission(dt);
+
+  uint16_t throttleTarget = IDLE_THROTTLE_US;
+  if (manualMode) {
+    pitchRefDeg = manualPitchRefDeg;
+    yawRefDeg = manualYawRefDeg;
+    servo.setTargetAngles(pitchRefDeg, yawRefDeg);
+    throttleTarget = manualThrottleUs;
+  } else if (missionActive) {
+    throttleTarget = autoThrottle;
+  }
+
+  uint16_t throttleOut = slewThrottleToward(throttleTarget);
+  esc.writeMicroseconds(throttleOut);
+
+  if (allowServoWrite()) {
+    servo.update(pitchDeg, yawDeg);
+  }
+
+#if LOG_LEVEL >= 1
+  if (millis() - lastStatusPrintMs >= 250) {
+    lastStatusPrintMs = millis();
+    LOGI("state=%s man=%d r=%.1f p=%.1f y=%.1f pref=%.1f yref=%.1f thr=%u\n",
+         stateName(mstate), manualMode ? 1 : 0,
+         rollDeg, pitchDeg, yawDeg, pitchRefDeg, yawRefDeg, throttleOut);
+  }
+#endif
+
+  delay(5);
+}
