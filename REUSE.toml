@@ -1,0 +1,46 @@
+version = 1
+SPDX-PackageName = "underwater-rocket-esp32-firmware"
+SPDX-PackageSupplier = "Alaa Radhwan"
+
+# Licences apply ONLY to material written by the repository author. They do not cover external
+# libraries, third-party code or material the author has no rights to (see NOTICE and
+# docs/LICENSE_SCOPE.md). No third-party source is vendored in this repository.
+# Later annotations take precedence over earlier ones, so the documentation and simulation
+# entries below override the broader code entry.
+
+# Firmware, prototypes, tooling, CI configuration and repository metadata.
+[[annotations]]
+path = [
+  "firmware/**",
+  "prototypes/**",
+  "tools/**",
+  ".github/**",
+  ".gitignore",
+  ".gitattributes",
+  "LICENSE",
+  "REUSE.toml",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 Alaa Radhwan"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# MATLAB/Simulink model and scripts (MATLAB and Simulink themselves are not covered).
+[[annotations]]
+path = ["simulation/**/*.slx", "simulation/**/*.m"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 Alaa Radhwan"
+SPDX-License-Identifier = "MIT"
+
+# Documentation, diagrams and figures, including the Markdown files that sit inside code directories.
+[[annotations]]
+path = [
+  "README.md",
+  "NOTICE",
+  "THIRD_PARTY.md",
+  "docs/**",
+  "**/*.md",
+  "simulation/**/figures/**",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 Alaa Radhwan"
+SPDX-License-Identifier = "CC-BY-4.0"

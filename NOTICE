@@ -1,0 +1,39 @@
+underwater-rocket-esp32-firmware
+Copyright 2025-2026 Alaa Radhwan
+
+LICENCES BY AREA (machine-readable mapping: REUSE.toml; full texts: LICENSES/)
+
+  GPL-3.0-or-later   firmware/, prototypes/, tools/, .github/ and repository configuration files
+  MIT                simulation/ - the MATLAB/Simulink model (.slx) and scripts (.m)
+  CC-BY-4.0          README, NOTICE, THIRD_PARTY.md, docs/, all other Markdown files,
+                     and the figures and diagrams
+
+These licences apply only to material written by the repository author. The firmware was
+developed with AI assistance; the author states that no teammate wrote it.
+
+WHAT THESE LICENCES DO NOT COVER
+
+  - The ps5Controller library. It has no licence file, is fetched at build time from an upstream
+    repository (pinned commit), and is NOT redistributed here. Choosing the GPL for this
+    repository neither licenses it nor resolves its status. Do not vendor or mirror it, and do not
+    distribute compiled firmware (.bin/.elf) built from the PS5-dependent variants. A request for
+    permission has not been sent and no permission has been obtained. See docs/PS5_DEPENDENCY.md.
+  - Other libraries fetched by PlatformIO (PID_v1, SparkFun ICM-20948, Adafruit PWM Servo Driver,
+    Adafruit BusIO, the ESP32 Arduino core and ESP-IDF): each remains under its own licence.
+    See THIRD_PARTY.md.
+  - three.js, which the early prototype's web viewer loads from a CDN at run time. It is MIT-licensed
+    by its authors and is not included in this repository.
+  - The Mahony attitude-filter algorithm (Mahony, Hamel and Pflimlin, IEEE TAC 2008) and the
+    published reference implementations it resembles. The GPL route was chosen because a derivation
+    from the GPL-noted reference can neither be shown nor excluded (docs/LICENSING.md).
+  - MATLAB and Simulink, which are needed to run the model.
+  - The vehicle's mechanical design, which is a teammate's work and is not in this repository.
+  - The graduation report, photographs and test footage, which are not included. Any media added
+    later needs its own decision.
+  - Names, trademarks and the author's identity: no endorsement or trademark rights are granted.
+
+The historical firmware sources are preserved as written. Licensing is stated here and in
+REUSE.toml, not by editing those files.
+
+NO WARRANTY. The firmware has known safety limitations (docs/SAFETY.md); do not run propulsion
+hardware from it without your own safety procedure.

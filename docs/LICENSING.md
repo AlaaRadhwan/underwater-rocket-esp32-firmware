@@ -1,6 +1,6 @@
 # Licensing status and open questions
 
-**No licence has been selected for this repository.** Until one is added, default copyright applies. This page records what was investigated so the decision can be made on evidence. It is engineering analysis, not legal advice.
+**Status: licences applied** (GPL-3.0-or-later for firmware, MIT for simulation, CC BY 4.0 for documentation; see [LICENSE_SCOPE.md](LICENSE_SCOPE.md) and [`REUSE.toml`](../REUSE.toml)). This page records the investigation behind that choice and the questions that remain open. It is engineering analysis, not legal advice.
 
 ## 1. Provenance of the `mahony6Update` function
 
@@ -30,7 +30,7 @@ The function (in every firmware variant's `main.cpp`) implements the Mahony comp
 2. **Permissive licence plus a documented rewrite** of the function from the 2008 paper, with a numerical comparison test; historical variants stay with an explicit provenance notice. Higher effort, and the preserved files would still carry the open question.
 3. **Per-directory licences** (e.g. permissive for simulation and docs, GPL for firmware). Clear but adds complexity.
 
-Nothing is applied until the author decides.
+**Decision:** the author chose option 1 (GPL-3.0-or-later for the firmware directories), with MIT for the simulation files and CC BY 4.0 for documentation; it is applied in [LICENSE_SCOPE.md](LICENSE_SCOPE.md). This is the conservative response to an open question, not a finding that the function is derived.
 
 ## 2. PS5 controller library
 
@@ -52,8 +52,8 @@ The firmware calls `ps5Controller` (`ps5.begin(mac)`, `ps5.Circle()`, `ps5.RStic
 
 See [THIRD_PARTY.md](../THIRD_PARTY.md). All other build dependencies are permissively licensed (MIT/BSD), and the ESP32 Arduino core is LGPL/Apache.
 
-## 4. What is required to publish with a licence
+## 4. Status of the licensing work
 
-1. Decide on the option in section 1.
-2. Add the chosen `LICENSE` and per-file SPDX/attribution headers as the decision requires.
-3. Re-confirm that no third-party source is redistributed (current state: none vendored).
+1. Option chosen and applied: `LICENSE`, `LICENSES/`, `REUSE.toml`, `NOTICE`; `reuse lint` passes.
+2. No third-party source is redistributed (checked by search of all tracked files).
+3. Still open: permission from the PS5 library's rights-holders (not requested), and the Mahony provenance question itself.

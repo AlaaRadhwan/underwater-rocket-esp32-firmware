@@ -2,7 +2,7 @@
 
 Embedded C++ firmware (Arduino framework, PlatformIO) for an ESP32-controlled, fin-stabilised underwater vehicle: IMU acquisition and calibration, a 6-axis Mahony attitude filter, pitch/yaw fin control, four-fin servo mixing over a PCA9685, ESC throttle control, Bluetooth (PS5 DualSense) operator control, and over-the-air updates. The repository also contains the MATLAB/Simulink model from the related university graduation project and documents what was and was not demonstrated.
 
-> **Status: prototype / portfolio repository.** No automated tests, no logged flight or pool data, no licence selected yet (see [Licensing](#licensing)). The firmware has known safety limitations - read [docs/SAFETY.md](docs/SAFETY.md) before running anything with a motor attached.
+> **Status: prototype / portfolio repository.** No automated tests, no logged flight or pool data, licensed by area under GPL-3.0-or-later / MIT / CC BY 4.0, with one unlicensed third-party dependency (see [Licensing](#licensing)). The firmware has known safety limitations - read [docs/SAFETY.md](docs/SAFETY.md) before running anything with a motor attached.
 
 ## What is in here
 
@@ -126,8 +126,8 @@ pio run -e esp32-usb
 ```
 
 - Platform (`espressif32@6.6.0`), framework and every library are pinned; the SparkFun IMU driver and the PS5 library are pinned to commit hashes.
-- The PS5 library is **fetched at build time and not redistributed here**: its upstream repository has no licence file ([docs/LICENSING.md](docs/LICENSING.md)).
-- CI compiles all three firmware variants on every push ([.github/workflows/build.yml](.github/workflows/build.yml)). Compiling is the only thing verified; **nothing here has been re-run on hardware from this repository.**
+- The PS5 library is **fetched at build time and not redistributed here**: it has **no confirmed licence**. Do not vendor it or distribute compiled firmware built from the PS5-dependent variants ([docs/PS5_DEPENDENCY.md](docs/PS5_DEPENDENCY.md)).
+- CI compiles all three firmware variants and runs `reuse lint` on every push ([.github/workflows/build.yml](.github/workflows/build.yml)); it has not run on GitHub yet. Compiling is the only thing verified; **nothing here has been re-run on hardware from this repository.**
 - On Windows keep the checkout path short; the SparkFun library can exceed the 260-character path limit.
 - OTA upload: set `UWR_OTA_PASSWORD` in your environment and use `-e esp32-ota`.
 - Real credentials and the controller pairing address live only in the git-ignored `include/secrets.h`. They were removed from the historical sources; see [RECONSTRUCTION.md](firmware/graduation_aug26_ps5_heading_hold/RECONSTRUCTION.md) for the exact (two-line) sanitisation.
@@ -157,6 +157,14 @@ The original sources had no version control, only dated file snapshots. [docs/DE
 
 ## Licensing
 
-**No licence has been selected yet.** Until one is added, default copyright applies and the code is visible but not licensed for reuse. A proposal (GPL-3.0-or-later for the firmware, separate terms for simulation and documentation) is in [docs/LICENSE_PROPOSAL.md](docs/LICENSE_PROPOSAL.md); it states exactly what it would and would not cover. The open questions are explained in [docs/LICENSING.md](docs/LICENSING.md).
+| Area | Licence |
+|---|---|
+| Firmware, prototypes, tools, CI (`firmware/`, `prototypes/`, `tools/`, `.github/`) | [GPL-3.0-or-later](LICENSES/GPL-3.0-or-later.txt) |
+| Simulink model and MATLAB scripts (`simulation/`) | [MIT](LICENSES/MIT.txt) |
+| Documentation, diagrams and figures (README, `docs/`, all Markdown, figures) | [CC BY 4.0](LICENSES/CC-BY-4.0.txt) |
 
-**The PS5 library is not covered by any licence here.** The 2025 mission and Aug 26 variants depend on a third-party library that has no licence file; it is fetched from upstream, not redistributed, and its use and redistribution are restricted accordingly. Provenance, the pinned version and the consequences are in [docs/PS5_DEPENDENCY.md](docs/PS5_DEPENDENCY.md).
+The mapping is machine-readable in [`REUSE.toml`](REUSE.toml) and passes `reuse lint`. These licences cover **only the author's original material**. [`NOTICE`](NOTICE) and [docs/LICENSE_SCOPE.md](docs/LICENSE_SCOPE.md) list what they do not cover: the fetched libraries, the Mahony algorithm and its reference code, MATLAB/Simulink, the vehicle's mechanical design, and any report or media.
+
+**The PS5 library has no confirmed licence.** The 2025 mission and Aug 26 variants depend on a third-party library with no licence file. It is fetched from a pinned upstream commit and is not redistributed here. **Choosing the GPL does not license it or resolve its status.** Do not vendor or mirror it, and do not distribute compiled firmware (`.bin`/`.elf`) built from those variants. Permission has not been requested or obtained. Details: [docs/PS5_DEPENDENCY.md](docs/PS5_DEPENDENCY.md).
+
+The licence choice for the firmware follows the open provenance question on the Mahony update function, explained in [docs/LICENSING.md](docs/LICENSING.md).

@@ -32,7 +32,7 @@ The bundled Bluetooth-stack header files carry Apache-2.0 notices (Broadcom and 
 - **This repository does not contain or redistribute the library**, so publishing the source here does not copy it. Anyone who builds the project downloads it from its own upstream and must make their own determination about use.
 - **Do not** vendor, mirror or fork the library into this repository or a derivative of it.
 - **Do not distribute compiled firmware** (`.bin`/`.elf`) built from the PS5-dependent variants, because it contains the library. The repository ignores those files and CI does not upload build artifacts.
-- **Choosing the GPL for this repository does not change any of this** ([LICENSE_PROPOSAL.md](LICENSE_PROPOSAL.md)).
+- **Choosing the GPL for this repository does not change any of this** ([LICENSE_SCOPE.md](LICENSE_SCOPE.md)).
 - **Availability risk:** one upstream copy has already been deleted. If the pinned repository disappears, the PS5-dependent builds stop working; the other variants are unaffected.
 - **Reuse:** reuse of the PS5-dependent variants by others is at their own responsibility.
 

@@ -1,5 +1,12 @@
 name: build
 on: [push, pull_request]
+
+# Least privilege: the jobs only read the repository.
+permissions:
+  contents: read
+
+# Actions are pinned to full commit SHAs (tag shown in the comment). Nothing is uploaded: no
+# build artifacts are produced, because the PS5-dependent variants contain an unlicensed library.
 jobs:
   compile:
     runs-on: ubuntu-latest
@@ -11,9 +18,13 @@ jobs:
           - 2025_teknofest_mission
           - 2026_wifi_control
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.11" }
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.platformio
+          key: pio-${{ matrix.variant }}-${{ hashFiles('firmware/*/platformio.ini') }}
       - run: pip install platformio==6.1.19
       - name: Create a placeholder secrets header (never real values)
         working-directory: firmware/${{ matrix.variant }}
@@ -21,3 +32,13 @@ jobs:
       - name: Compile (no hardware is run in CI)
         working-directory: firmware/${{ matrix.variant }}
         run: pio run -e esp32-usb
+
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: { python-version: "3.11" }
+      - run: pip install reuse==6.3.0
+      - name: Licensing metadata check
+        run: reuse lint
