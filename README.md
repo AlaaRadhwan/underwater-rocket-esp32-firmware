@@ -45,6 +45,60 @@ Full diagrams (runtime tasks, PS5 command map, actuator and ESC wiring) are in [
 
 Parameters of the preserved configuration are listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#implemented-parameters).
 
+## Code tour
+
+Everything below is in the [Aug 26 variant](firmware/graduation_aug26_ps5_heading_hold/); line numbers refer to the files as committed (the same numbering as the original `main28_08` source).
+
+| Topic | Where to read it |
+|---|---|
+| IMU acquisition, retry and calibration | [`readIMU_safe`](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L142-L153), [`calibrateStill`](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L190-L236) |
+| Attitude estimation | [`mahony6Update`](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L260-L294), [online gyro-bias update](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L297-L320), [quaternion to roll/pitch/yaw](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L245-L257), [per-loop estimation chain](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L515-L560) |
+| Heading-lock reference capture | [Triangle request](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L470-L474), [capture](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L573-L581), [throttle-triggered lock](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L583-L599) |
+| Pitch/yaw control and fin mixing | [`Servo_Controller::update`](firmware/graduation_aug26_ps5_heading_hold/lib/Servo_Controller/Servo_Controller.cpp#L106-L220), [`manualCombined`](firmware/graduation_aug26_ps5_heading_hold/lib/Servo_Controller/Servo_Controller.cpp#L59-L65), [AUTO-mode call](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L601-L606) |
+| PS5 input processing | [connection, kill, mode chords, manual fins, D-pad throttle](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L427-L512) |
+| OTA task and I²C recovery | [`otaTask` (core 0)](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L322-L373), [`i2cBusRecover`, `recoverIMU`, watchdog](firmware/graduation_aug26_ps5_heading_hold/src/main.cpp#L118-L167), [PCA9685 wrapper](firmware/graduation_aug26_ps5_heading_hold/lib/Servo_Module/Servo_Module.h#L41-L51) |
+
+### Control law, end to end
+
+1. The IMU yaw is integrated by the Mahony filter (gyro-only, no magnetometer) and smoothed by a **circular** low-pass on sin/cos, so the +/-180 degree wrap does not corrupt the average.
+2. **Lock:** when heading lock is requested, the current yaw and pitch become the references. They are relative, not compass bearings.
+3. **Error:** `e = wrap180(yaw_ref - yaw_filtered)`. Because `PID_v1` is linear, the wrapped error is fed in with a zero setpoint.
+4. **Controller:** a `PID_v1` instance per axis (P-only in the preserved configuration) with output limited to +/-25 degrees about the servo centre.
+5. **Conditioning:** deadband, then a per-fin rate limit and a minimum-step write filter before the PCA9685 is updated.
+6. **Mixing:** pitch drives the left/right fins oppositely (`90 + u`, `90 - u`); yaw drives the top/bottom fins oppositely, with the sign inverted to match the fin wiring. Roll is not controlled.
+
+Heading-lock capture (`src/main.cpp`, lines 573-581; verbatim apart from removing the common indentation):
+
+```cpp
+// Triangle-triggered heading lock
+if (triangleLockRequest && !killSwitchEngaged) {
+  yawRefDeg = yawDeg;
+  servo.setTargetAngles(pitchDeg, yawRefDeg);
+  headingLocked = true;
+  headingLockT0 = millis();
+  triangleLockRequest = false;
+  LOGI("Heading LOCKED via Triangle at %.2f deg\n", yawRefDeg);
+}
+```
+
+Wrapped yaw error and fin mapping (`lib/Servo_Controller/Servo_Controller.cpp`, lines 178 and 194-202, verbatim apart from removing the common indentation; the omitted lines hold the `PID_v1` call and are marked `// ...`):
+
+```cpp
+float yawErr = angDiff180f((float)targetYaw, (float)inputYaw);
+// ...
+double op = applyDeadband(outputPitch, deadbandPitch);
+double oy = applyDeadband(outputYaw,   deadbandYaw);
+oy = oy * -1.0;   // keep your mechanical inversion
+
+// --- Map to fins, rate limit, maybeWrite(...) exactly as before ---
+float tgtL = 90.f + (float)op;
+float tgtR = 90.f - (float)op;
+float tgtT = 90.f - (float)oy;
+float tgtB = 90.f + (float)oy;
+```
+
+The second excerpt keeps the original comments, which show its AI-assisted authoring history (see [Attribution](#attribution)).
+
 ## Graduation-project evidence (qualitative)
 
 The Aug 26 firmware was used on a physical vehicle in university pool tests. The operator used the PS5 controller for **throttle and heading lock**. In the heading-correction test the vehicle was aligned, heading lock was activated, and the orientation was then deliberately disturbed to observe whether the IMU-based controller would return it toward the locked heading through differential fin actuation.
@@ -103,4 +157,6 @@ The original sources had no version control, only dated file snapshots. [docs/DE
 
 ## Licensing
 
-**No licence has been selected yet.** Until one is added, default copyright applies and the code is visible but not licensed for reuse. The open questions (provenance of the Mahony update function, the unlicensed PS5 library) are explained in [docs/LICENSING.md](docs/LICENSING.md).
+**No licence has been selected yet.** Until one is added, default copyright applies and the code is visible but not licensed for reuse. A proposal (GPL-3.0-or-later for the firmware, separate terms for simulation and documentation) is in [docs/LICENSE_PROPOSAL.md](docs/LICENSE_PROPOSAL.md); it states exactly what it would and would not cover. The open questions are explained in [docs/LICENSING.md](docs/LICENSING.md).
+
+**The PS5 library is not covered by any licence here.** The 2025 mission and Aug 26 variants depend on a third-party library that has no licence file; it is fetched from upstream, not redistributed, and its use and redistribution are restricted accordingly. Provenance, the pinned version and the consequences are in [docs/PS5_DEPENDENCY.md](docs/PS5_DEPENDENCY.md).
