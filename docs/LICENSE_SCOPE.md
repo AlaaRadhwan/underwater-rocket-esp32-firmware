@@ -31,7 +31,8 @@ They cover only copyright in material written by the repository author. The auth
 | Mahony algorithm and the x-io reference code | Published work by others |
 | MATLAB and Simulink | Commercial software needed to run the model |
 | The vehicle's mechanical design | A teammate's work, not in this repository |
-| Report, photographs, test footage | Not included; separate decision |
+| Report and photographs | Not included; separate decision |
+| Pool-test clip (`media/`) | Included: 10 s, no audio, no people, metadata stripped; the author's footage (CC BY 4.0), but the vehicle's design shown in it remains the teammate's |
 | Names, marks, the author's identity | No trademark or endorsement rights |
 
 ## 4. Consequences

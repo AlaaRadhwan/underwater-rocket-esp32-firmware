@@ -44,3 +44,11 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025-2026 Alaa Radhwan"
 SPDX-License-Identifier = "CC-BY-4.0"
+
+# Pool-test clip and poster still: author's own footage, shared under the documentation licence.
+# The vehicle's mechanical design is a teammate's and is not covered (see NOTICE and docs/LICENSE_SCOPE.md).
+[[annotations]]
+path = ["media/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 Alaa Radhwan"
+SPDX-License-Identifier = "CC-BY-4.0"

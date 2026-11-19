@@ -28,8 +28,9 @@ WHAT THESE LICENCES DO NOT COVER
     from the GPL-noted reference can neither be shown nor excluded (docs/LICENSING.md).
   - MATLAB and Simulink, which are needed to run the model.
   - The vehicle's mechanical design, which is a teammate's work and is not in this repository.
-  - The graduation report, photographs and test footage, which are not included. Any media added
-    later needs its own decision.
+  - The graduation report and photographs, which are not included. The one pool-test clip in
+    media/ is the author's footage; the vehicle's design shown in it is the teammate's. Any other
+    media needs its own decision.
   - Names, trademarks and the author's identity: no endorsement or trademark rights are granted.
 
 The historical firmware sources are preserved as written. Licensing is stated here and in

@@ -46,4 +46,4 @@ The Simulink model ([`simulation/graduation_2025/`](../simulation/graduation_202
 
 ## Media
 
-Test footage and the full report are not included here: footage shows people, and the report cover carries personal identifiers. Media will be added only after review for identifying information and metadata. The simulation figures in this repository are original MATLAB plots.
+One 10-second pool-test clip ([`media/pool-test-heading-lock.mp4`](../media/pool-test-heading-lock.mp4)) is included. It was reviewed for people and identifying information and has no audio and no source metadata. It is qualitative only: it shows the vehicle running under power, not fin deflections, the controller, a disturbance or measured heading correction. The full report and other footage are not included: other footage shows people, and the report cover carries personal identifiers. The simulation figures in this repository are original MATLAB plots.

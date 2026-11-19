@@ -18,22 +18,24 @@ Embedded C++ firmware (Arduino framework, PlatformIO) for an ESP32-controlled, f
 ## Architecture at a glance
 
 ```mermaid
-flowchart LR
-  IMU["ICM-20948 IMU<br/>I2C 0x69"] --> CAL["still-calibration +<br/>online gyro-bias (ZARU)"]
-  CAL --> MAH["6-axis Mahony filter<br/>(no magnetometer)"]
-  MAH --> RPY["roll / pitch / yaw"]
-  PS5["PS5 DualSense<br/>(Bluetooth)"] --> MODE["mode + heading-lock<br/>logic"]
-  RPY --> CTRL["Servo_Controller<br/>PID_v1 on pitch and wrapped yaw error<br/>filter - deadband - rate limit"]
-  MODE --> CTRL
-  CTRL --> MIX["4-fin mixing<br/>L/R = pitch, T/B = yaw"]
-  MIX --> PCA["PCA9685<br/>I2C 0x40"]
-  PS5 --> THR["throttle (D-pad)"]
+flowchart TB
+  subgraph STAB["Stabilisation path"]
+    direction LR
+    IMU["IMU<br/>ICM-20948"] --> EST["Attitude<br/>estimation"] --> CTRL["Pitch / yaw<br/>PID control"] --> MIX["4-fin<br/>mixing"]
+  end
+  subgraph OP["Operator path"]
+    direction LR
+    PS5["PS5<br/>DualSense"] --> LOCK["Mode +<br/>heading lock"]
+    PS5 --> THR["Throttle"]
+  end
+  LOCK --> CTRL
+  MIX --> PCA["PCA9685"]
   THR --> PCA
-  PCA --> FINS["4 fin servos<br/>ch 0, 2, 3, 1"]
-  PCA --> ESC["ESC<br/>ch 4"]
+  PCA --> FINS["4 fin servos"]
+  PCA --> ESC["ESC"]
 ```
 
-Full diagrams (runtime tasks, PS5 command map, actuator and ESC wiring) are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The stabilisation path (IMU to fins) is automatic; the operator path (PS5) sets mode, heading lock and throttle. Estimator, signal-path, PS5 command-map, wiring and runtime-task diagrams are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ### Implemented behaviour (Aug 26 variant)
 
@@ -99,6 +101,18 @@ float tgtB = 90.f + (float)oy;
 
 The second excerpt keeps the original comments, which show its AI-assisted authoring history (see [Attribution](#attribution)).
 
+## Physical Testing
+
+<p align="center">
+  <a href="media/pool-test-heading-lock.mp4">
+    <img src="media/pool-test-heading-lock-poster.png" alt="Pool test of the yellow underwater vehicle running near the surface (click to open the video)" width="320">
+  </a>
+</p>
+
+<p align="center"><em>Graduation-project pool test &mdash; operator-controlled throttle with IMU-based heading lock. Qualitative demonstration; no onboard telemetry recorded.</em></p>
+
+<p align="center"><a href="media/pool-test-heading-lock.mp4">Watch the 10-second clip (MP4, 2 MB)</a></p>
+
 ## Graduation-project evidence (qualitative)
 
 The Aug 26 firmware was used on a physical vehicle in university pool tests. The operator used the PS5 controller for **throttle and heading lock**. In the heading-correction test the vehicle was aligned, heading lock was activated, and the orientation was then deliberately disturbed to observe whether the IMU-based controller would return it toward the locked heading through differential fin actuation.
@@ -161,7 +175,7 @@ The original sources had no version control, only dated file snapshots. [docs/DE
 |---|---|
 | Firmware, prototypes, tools, CI (`firmware/`, `prototypes/`, `tools/`, `.github/`) | [GPL-3.0-or-later](LICENSES/GPL-3.0-or-later.txt) |
 | Simulink model and MATLAB scripts (`simulation/`) | [MIT](LICENSES/MIT.txt) |
-| Documentation, diagrams and figures (README, `docs/`, all Markdown, figures) | [CC BY 4.0](LICENSES/CC-BY-4.0.txt) |
+| Documentation, diagrams and figures (README, `docs/`, all Markdown, figures, pool-test clip in `media/`) | [CC BY 4.0](LICENSES/CC-BY-4.0.txt) |
 
 The mapping is machine-readable in [`REUSE.toml`](REUSE.toml) and passes `reuse lint`. These licences cover **only the author's original material**. [`NOTICE`](NOTICE) and [docs/LICENSE_SCOPE.md](docs/LICENSE_SCOPE.md) list what they do not cover: the fetched libraries, the Mahony algorithm and its reference code, MATLAB/Simulink, the vehicle's mechanical design, and any report or media.
 
