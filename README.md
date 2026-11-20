@@ -103,15 +103,9 @@ The second excerpt keeps the original comments, which show its AI-assisted autho
 
 ## Physical Testing
 
-<p align="center">
-  <a href="media/pool-test-heading-lock.mp4">
-    <img src="media/pool-test-heading-lock-poster.png" alt="Pool test of the yellow underwater vehicle running near the surface (click to open the video)" width="320">
-  </a>
-</p>
+https://github.com/user-attachments/assets/aa952f6f-10c2-41a4-87b3-deb6a84ccaf5
 
-<p align="center"><em>Graduation-project pool test &mdash; operator-controlled throttle with IMU-based heading lock. Qualitative demonstration; no onboard telemetry recorded.</em></p>
-
-<p align="center"><a href="media/pool-test-heading-lock.mp4">Watch the 10-second clip (MP4, 2 MB)</a></p>
+*Graduation-project pool test — operator-controlled throttle with IMU-based heading lock. Qualitative demonstration; no onboard telemetry recorded.*
 
 ## Graduation-project evidence (qualitative)
 
