@@ -47,6 +47,12 @@ The stabilisation path (IMU to fins) is automatic; the operator path (PS5) sets 
 
 Parameters of the preserved configuration are listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#implemented-parameters).
 
+## Physical Testing
+
+https://github.com/user-attachments/assets/aa952f6f-10c2-41a4-87b3-deb6a84ccaf5
+
+*Graduation-project pool test — operator-controlled throttle with IMU-based heading lock. Qualitative demonstration; no onboard telemetry recorded.*
+
 ## Code tour
 
 Everything below is in the [Aug 26 variant](firmware/graduation_aug26_ps5_heading_hold/); line numbers refer to the files as committed (the same numbering as the original `main28_08` source).
@@ -101,12 +107,6 @@ float tgtB = 90.f + (float)oy;
 
 The second excerpt keeps the original comments, which show its AI-assisted authoring history (see [Attribution](#attribution)).
 
-## Physical Testing
-
-https://github.com/user-attachments/assets/aa952f6f-10c2-41a4-87b3-deb6a84ccaf5
-
-*Graduation-project pool test — operator-controlled throttle with IMU-based heading lock. Qualitative demonstration; no onboard telemetry recorded.*
-
 ## Graduation-project evidence (qualitative)
 
 The Aug 26 firmware was used on a physical vehicle in university pool tests. The operator used the PS5 controller for **throttle and heading lock**. In the heading-correction test the vehicle was aligned, heading lock was activated, and the orientation was then deliberately disturbed to observe whether the IMU-based controller would return it toward the locked heading through differential fin actuation.
@@ -135,7 +135,7 @@ pio run -e esp32-usb
 
 - Platform (`espressif32@6.6.0`), framework and every library are pinned; the SparkFun IMU driver and the PS5 library are pinned to commit hashes.
 - The PS5 library is **fetched at build time and not redistributed here**: it has **no confirmed licence**. Do not vendor it or distribute compiled firmware built from the PS5-dependent variants ([docs/PS5_DEPENDENCY.md](docs/PS5_DEPENDENCY.md)).
-- CI compiles all three firmware variants and runs `reuse lint` on every push ([.github/workflows/build.yml](.github/workflows/build.yml)); it has not run on GitHub yet. Compiling is the only thing verified; **nothing here has been re-run on hardware from this repository.**
+- GitHub Actions compiles all three firmware variants and runs `reuse lint` on every push ([.github/workflows/build.yml](.github/workflows/build.yml)); these checks have passed on GitHub. Compilation verifies buildability, not hardware behaviour; **nothing here has been re-run on hardware from this repository.**
 - On Windows keep the checkout path short; the SparkFun library can exceed the 260-character path limit.
 - OTA upload: set `UWR_OTA_PASSWORD` in your environment and use `-e esp32-ota`.
 - Real credentials and the controller pairing address live only in the git-ignored `include/secrets.h`. They were removed from the historical sources; see [RECONSTRUCTION.md](firmware/graduation_aug26_ps5_heading_hold/RECONSTRUCTION.md) for the exact (two-line) sanitisation.
@@ -171,7 +171,7 @@ The original sources had no version control, only dated file snapshots. [docs/DE
 | Simulink model and MATLAB scripts (`simulation/`) | [MIT](LICENSES/MIT.txt) |
 | Documentation, diagrams and figures (README, `docs/`, all Markdown, figures, pool-test clip in `media/`) | [CC BY 4.0](LICENSES/CC-BY-4.0.txt) |
 
-The mapping is machine-readable in [`REUSE.toml`](REUSE.toml) and passes `reuse lint`. These licences cover **only the author's original material**. [`NOTICE`](NOTICE) and [docs/LICENSE_SCOPE.md](docs/LICENSE_SCOPE.md) list what they do not cover: the fetched libraries, the Mahony algorithm and its reference code, MATLAB/Simulink, the vehicle's mechanical design, and any report or media.
+The mapping is machine-readable in [`REUSE.toml`](REUSE.toml) and passes `reuse lint`. These licences cover **only the author's original material**. [`NOTICE`](NOTICE) and [docs/LICENSE_SCOPE.md](docs/LICENSE_SCOPE.md) clarify the exclusions, including fetched libraries, the Mahony algorithm and its reference code, MATLAB/Simulink software, the teammate's mechanical design, and the unpublished report and other excluded media. The included pool-test video is licensed as stated above; that licence does not cover the vehicle's mechanical design.
 
 **The PS5 library has no confirmed licence.** The 2025 mission and Aug 26 variants depend on a third-party library with no licence file. It is fetched from a pinned upstream commit and is not redistributed here. **Choosing the GPL does not license it or resolve its status.** Do not vendor or mirror it, and do not distribute compiled firmware (`.bin`/`.elf`) built from those variants. Permission has not been requested or obtained. Details: [docs/PS5_DEPENDENCY.md](docs/PS5_DEPENDENCY.md).
 
